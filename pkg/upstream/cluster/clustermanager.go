@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 
 	"github.com/alipay/sofa-mosn/internal/api/v2"
 	"github.com/alipay/sofa-mosn/pkg/log"
@@ -31,7 +32,6 @@ import (
 	"github.com/alipay/sofa-mosn/pkg/stream/sofarpc"
 	"github.com/alipay/sofa-mosn/pkg/stream/xprotocol"
 	"github.com/alipay/sofa-mosn/pkg/types"
-	"sync"
 )
 
 // ClusterManager
@@ -50,7 +50,7 @@ type clusterManager struct {
 type clusterSnapshot struct {
 	prioritySet  types.PrioritySet
 	clusterInfo  types.ClusterInfo
-	loadBalancer types.LoadBalancer
+	loadbalancer types.LoadBalancer
 }
 
 func NewClusterManager(sourceAddr net.Addr, clusters []v2.Cluster,
@@ -95,7 +95,7 @@ func (cs *clusterSnapshot) ClusterInfo() types.ClusterInfo {
 }
 
 func (cs *clusterSnapshot) LoadBalancer() types.LoadBalancer {
-	return cs.loadBalancer
+	return cs.loadbalancer
 }
 
 type primaryCluster struct {
@@ -126,12 +126,10 @@ func (cm *clusterManager) ClusterExist(clusterName string) bool {
 	return false
 }
 
-func (cm *clusterManager) loadCluster(clusterConfig v2.Cluster, addedViaAPI bool) (types.Cluster, error) {
+func (cm *clusterManager) loadCluster(clusterConfig v2.Cluster, addedViaAPI bool) types.Cluster {
 	//clusterConfig.UseHealthCheck
-	cluster, err := NewCluster(clusterConfig, cm.sourceAddr, addedViaAPI)
-	if err != nil {
-		return nil, err
-	}
+	cluster := NewCluster(clusterConfig, cm.sourceAddr, addedViaAPI)
+
 	cluster.Initialize(func() {
 		cluster.PrioritySet().AddMemberUpdateCb(func(priority uint32, hostsAdded []types.Host, hostsRemoved []types.Host) {
 		})
@@ -142,7 +140,7 @@ func (cm *clusterManager) loadCluster(clusterConfig v2.Cluster, addedViaAPI bool
 		addedViaAPI: addedViaAPI,
 	})
 
-	return cluster, nil
+	return cluster
 }
 
 func (cm *clusterManager) getOrCreateClusterSnapshot(clusterName string) *clusterSnapshot {
@@ -152,7 +150,7 @@ func (cm *clusterManager) getOrCreateClusterSnapshot(clusterName string) *cluste
 		clusterSnapshot := &clusterSnapshot{
 			prioritySet:  pcc.PrioritySet(),
 			clusterInfo:  pcc.Info(),
-			loadBalancer: pcc.Info().LBInstance(),
+			loadbalancer: pcc.Info().LBInstance(),
 		}
 
 		return clusterSnapshot
@@ -165,6 +163,7 @@ func (cm *clusterManager) SetInitializedCb(cb func()) {}
 
 func (cm *clusterManager) Clusters() map[string]types.Cluster {
 	clusterInfoMap := make(map[string]types.Cluster)
+
 	cm.primaryClusters.Range(func(key, value interface{}) bool {
 		clusterInfoMap[key.(string)] = value.(*primaryCluster).cluster
 		return true
@@ -241,7 +240,7 @@ func (cm *clusterManager) HTTPConnPoolForCluster(lbCtx types.LoadBalancerContext
 		return nil
 	}
 
-	host := clusterSnapshot.loadBalancer.ChooseHost(lbCtx)
+	host := clusterSnapshot.loadbalancer.ChooseHost(lbCtx)
 
 	if host != nil {
 		addr := host.AddressString()
@@ -283,7 +282,7 @@ func (cm *clusterManager) XprotocolConnPoolForCluster(lbCtx types.LoadBalancerCo
 		return nil
 	}
 
-	host := clusterSnapshot.loadBalancer.ChooseHost(nil)
+	host := clusterSnapshot.loadbalancer.ChooseHost(nil)
 
 	if host != nil {
 		addr := host.AddressString()
@@ -308,7 +307,7 @@ func (cm *clusterManager) TCPConnForCluster(lbCtx types.LoadBalancerContext, clu
 		return types.CreateConnectionData{}
 	}
 
-	host := clusterSnapshot.loadBalancer.ChooseHost(lbCtx)
+	host := clusterSnapshot.loadbalancer.ChooseHost(lbCtx)
 
 	if host != nil {
 		return host.CreateConnection(nil)
@@ -325,11 +324,11 @@ func (cm *clusterManager) SofaRPCConnPoolForCluster(lbCtx types.LoadBalancerCont
 		return nil
 	}
 
-	host := clusterSnapshot.loadBalancer.ChooseHost(lbCtx)
+	host := clusterSnapshot.loadbalancer.ChooseHost(lbCtx)
 
 	if host != nil {
 		addr := host.AddressString()
-		log.DefaultLogger.Debugf(" clusterSnapshot.loadBalancer.ChooseHost result is %s, cluster name = %s", addr, cluster)
+		log.DefaultLogger.Debugf(" clusterSnapshot.loadbalancer.ChooseHost result is %s, cluster name = %s", addr, cluster)
 
 		if connPool, ok := cm.sofaRPCConnPool.Load(addr); ok {
 			return connPool.(types.ConnectionPool)
@@ -342,7 +341,7 @@ func (cm *clusterManager) SofaRPCConnPoolForCluster(lbCtx types.LoadBalancerCont
 
 	}
 
-	log.DefaultLogger.Errorf("clusterSnapshot.loadBalancer.ChooseHost is nil, cluster name = %s", cluster)
+	log.DefaultLogger.Errorf("clusterSnapshot.loadbalancer.ChooseHost is nil, cluster name = %s", cluster)
 	return nil
 }
 
